@@ -30,6 +30,10 @@ class SoundDataset(Dataset):
         file_path = self.files[idx]
         waveform, sample_rate = torchaudio.load(file_path)
 
+        # convert to mono
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
         # fix length to 1 second
         target_length = SAMPLE_RATE
         if waveform.shape[1] > target_length:
