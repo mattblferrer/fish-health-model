@@ -20,7 +20,7 @@ IMAGE_PATH = "./data/images"
 ACCURACY_THRESHOLD = 0.90
 
 # Warning handling
-warnings.filterwarnings("error")
+warnings.filterwarnings("ignore")
 
 def load_audio_files() -> list[str]:
     print("Loading audio files from dataset...")
@@ -43,8 +43,6 @@ def create_spectrogram(audio_path: str) -> None:
         plt.axis('off')
         plt.savefig(plot_path, dpi=SPECTROGRAM_DPI, bbox_inches='tight')
         plt.close()
-    except Warning as w:
-        print(f"Warning while creating spectrogram for {audio_path}: {w}")
     except Exception as e:
         print(f"Error creating spectrogram for {audio_path}: {e}")
 
