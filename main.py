@@ -1,55 +1,57 @@
-import matplotlib.pyplot as plt
-import numpy as np
-import os
-import torch
-import torch.multiprocessing as mp
+import torch.nn as nn
 import torchaudio
-import torchvision
 import warnings
 from pathlib import Path
+from torch.utils.data import DataLoader, Dataset
 
 # Parameters for loading audio files and creating spectrograms
-SPECTROGRAM_DPI = 400
-SOUND_PATH = "./data/sounds"
-
-# AI model parameter definitions
-IMAGE_PATH = "./data/images"
-ACCURACY_THRESHOLD = 0.90
-IMAGE_SIZE = (2048, 2048)
-CHANNELS = 3
+SOUND_PATH = "./data"
+SAMPLE_RATE = 16000
+N_MELS = 64
 
 # Warning handling
 warnings.filterwarnings("ignore")
 
-def load_audio_files() -> list[str]:
-    print("Loading audio files from dataset...")
-    audio_files = []
-    root = Path(SOUND_PATH).resolve()
-    extensions = ["*.wav", "*.mp3", "*.flac"]
-    for ext in extensions:
-        for filepath in root.rglob(ext):
-            audio_files.append(str(filepath))
+class SoundDataset(Dataset):
+    def __init__(self, root):
+        self.root = Path(root)
+        self.files = [file for ext in ["*.wav", "*.mp3", "*.flac"] for file in self.root.rglob(ext)]
+        classes = sorted({file.parent.name for file in self.files})
+        self.label_map = {cls_name: i for i, cls_name in enumerate(classes)}
+        self.mel = torchaudio.transforms.MelSpectrogram(
+            sample_rate=SAMPLE_RATE,
+            n_mels=N_MELS
+        )
 
-    return audio_files
+    def __len__(self):
+        return len(self.files)
 
-def create_spectrogram(audio_path: str) -> None:
-    try:
-        plot_path = os.path.join(IMAGE_PATH, Path(os.path.basename(audio_path)).stem + ".png")
-        waveform, sample_rate = torchaudio.load(audio_path)
-        waveform = waveform.numpy()
-        _, axes = plt.subplots(1, 1)
-        axes.specgram(waveform[0], Fs=sample_rate)
-        plt.axis('off')
-        plt.savefig(plot_path, dpi=SPECTROGRAM_DPI, bbox_inches='tight', pad_inches=0)
-        plt.close()
-    except Exception as e:
-        print(f"Error creating spectrogram for {audio_path}: {e}")
+    def __getitem__(self, idx):
+        file_path = self.files[idx]
+        waveform, sample_rate = torchaudio.load(file_path)
+
+        # fix length to 1 second
+        target_length = SAMPLE_RATE
+        if waveform.shape[1] > target_length:
+            waveform = waveform[:, :target_length]
+        else:
+            padding = target_length - waveform.shape[1]
+            waveform = nn.functional.pad(waveform, (0, padding))
+
+        spectrogram = self.mel(waveform)
+        label_name = file_path.parent.name
+        label = self.label_map[label_name]
+
+        return spectrogram, label
+
+def load_audio_files() -> SoundDataset:
+    print(f"Loading audio files from dataset in {SOUND_PATH}...")
+    dataset = SoundDataset(SOUND_PATH)
+    return dataset
 
 def main():
     audio_files = load_audio_files()
     print(f"Loaded {len(audio_files)} audio files.")
-    for audio_file in audio_files:
-        create_spectrogram(audio_file)
 
 if __name__ == "__main__":
     main()
