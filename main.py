@@ -9,15 +9,14 @@ import warnings
 from pathlib import Path
 
 # Parameters for loading audio files and creating spectrograms
-SPECTROGRAM_DPI = 200
-SAMPLE_RATE = 44100
+SPECTROGRAM_DPI = 400
 SOUND_PATH = "./data/sounds"
-IMAGE_SIZE = (1024, 1024)
-CHANNELS = 3
 
 # AI model parameter definitions
 IMAGE_PATH = "./data/images"
 ACCURACY_THRESHOLD = 0.90
+IMAGE_SIZE = (2048, 2048)
+CHANNELS = 3
 
 # Warning handling
 warnings.filterwarnings("ignore")
@@ -41,7 +40,7 @@ def create_spectrogram(audio_path: str) -> None:
         _, axes = plt.subplots(1, 1)
         axes.specgram(waveform[0], Fs=sample_rate)
         plt.axis('off')
-        plt.savefig(plot_path, dpi=SPECTROGRAM_DPI, bbox_inches='tight')
+        plt.savefig(plot_path, dpi=SPECTROGRAM_DPI, bbox_inches='tight', pad_inches=0)
         plt.close()
     except Exception as e:
         print(f"Error creating spectrogram for {audio_path}: {e}")
