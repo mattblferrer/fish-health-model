@@ -4,12 +4,12 @@ import warnings
 from pathlib import Path
 from torch.utils.data import DataLoader, Dataset
 
-# Parameters for loading audio files and creating spectrograms
+# parameters for loading audio files and creating spectrograms
 SOUND_PATH = "./data"
 SAMPLE_RATE = 16000
 N_MELS = 64
 
-# Warning handling
+# warning handling
 warnings.filterwarnings("ignore")
 
 class SoundDataset(Dataset):
@@ -22,6 +22,7 @@ class SoundDataset(Dataset):
             sample_rate=SAMPLE_RATE,
             n_mels=N_MELS
         )
+        self.db = torchaudio.transforms.AmplitudeToDB()
 
     def __len__(self):
         return len(self.files)
@@ -43,12 +44,16 @@ class SoundDataset(Dataset):
                 padding = target_length - waveform.shape[1]
                 waveform = nn.functional.pad(waveform, (0, padding))
 
+            # create log mel spectrogram
             spectrogram = self.mel(waveform)
+            spectrogram = self.db(spectrogram)
+            spectrogram = (spectrogram - spectrogram.mean()) / spectrogram.std()
             label_name = file_path.parent.name
             label = self.label_map[label_name]
 
             return spectrogram, label
         
+        # if exception detected (e.g., corrupted file), skip to next file
         except Exception as e:
             print(f"Error loading {self.files[idx]}: {e}")
             return self.__getitem__((idx + 1) % len(self))
