@@ -5,10 +5,11 @@ import torch
 import torch.multiprocessing as mp
 import torchaudio
 import torchvision
+import warnings
 from pathlib import Path
 
 # Parameters for loading audio files and creating spectrograms
-SPECTROGRAM_DPI = 100
+SPECTROGRAM_DPI = 200
 SAMPLE_RATE = 44100
 SOUND_PATH = "./data/sounds"
 IMAGE_SIZE = (1024, 1024)
@@ -17,6 +18,9 @@ CHANNELS = 3
 # AI model parameter definitions
 IMAGE_PATH = "./data/images"
 ACCURACY_THRESHOLD = 0.90
+
+# Warning handling
+warnings.filterwarnings("error")
 
 def load_audio_files() -> list[str]:
     print("Loading audio files from dataset...")
@@ -30,15 +34,19 @@ def load_audio_files() -> list[str]:
     return audio_files
 
 def create_spectrogram(audio_path: str) -> None:
-    plot_path = os.path.join(IMAGE_PATH, os.path.basename(audio_path) + ".png")
-    waveform, sample_rate = torchaudio.load(audio_path)
-    waveform = waveform.numpy()
-    _, axes = plt.subplots(1, 1)
-    axes.specgram(waveform[0], Fs=sample_rate)
-    plt.axis('off')
-    plt.show(block=False)
-    plt.savefig(plot_path, dpi=SPECTROGRAM_DPI, bbox_inches='tight')
-    plt.close()
+    try:
+        plot_path = os.path.join(IMAGE_PATH, Path(os.path.basename(audio_path)).stem + ".png")
+        waveform, sample_rate = torchaudio.load(audio_path)
+        waveform = waveform.numpy()
+        _, axes = plt.subplots(1, 1)
+        axes.specgram(waveform[0], Fs=sample_rate)
+        plt.axis('off')
+        plt.savefig(plot_path, dpi=SPECTROGRAM_DPI, bbox_inches='tight')
+        plt.close()
+    except Warning as w:
+        print(f"Warning while creating spectrogram for {audio_path}: {w}")
+    except Exception as e:
+        print(f"Error creating spectrogram for {audio_path}: {e}")
 
 def main():
     audio_files = load_audio_files()
