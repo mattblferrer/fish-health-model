@@ -12,7 +12,7 @@ TIME_FRAMES  = 128
 MODEL_PATH   = "fish_classifier.pt"
 
 # Must match the order classes were discovered during training (alphabetical)
-LABEL_MAP = {0: "healthy", 1: "unhealthy"}
+LABEL_MAP = {0: "unstressed", 1: "stressed"}
 
 
 # Copy of the model architecture (must be identical to training)
@@ -82,7 +82,7 @@ def load_spectrogram(filepath: str) -> torch.Tensor:
 
 
 # Inference 
-def predict(filepath: str) -> None:
+def predict(filepath: str, output_file: str) -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # Load model
@@ -107,14 +107,22 @@ def predict(filepath: str) -> None:
     for idx, class_name in LABEL_MAP.items():
         print(f"  {class_name:<12} {probs[idx].item():.1%}")
 
+    with open(output_file, "a") as f:
+        f.write(f"{Path(filepath).name},{label},{confidence.item():.4f}\n")
+
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python predict.py path/to/audio.wav")
-        print("   or: python predict.py path/to/folder/")
+    if len(sys.argv) < 3:
+        print("Usage: python predict.py path/to/audio.wav output.csv")
+        print("   or: python predict.py path/to/folder/ output.csv")
         sys.exit(1)
 
     target = Path(sys.argv[1])
+    output_file = sys.argv[2]
+
+    # Write CSV header
+    with open(output_file, "a") as f:
+        f.write("filename,prediction,confidence\n")
 
     if target.is_dir():
         # Predict on all audio files in a folder
@@ -123,7 +131,7 @@ if __name__ == "__main__":
             print(f"No audio files found in {target}")
             sys.exit(1)
         for f in files:
-            predict(str(f))
+            predict(str(f), output_file)
     else:
-        predict(str(target))
+        predict(str(target), output_file)
     
