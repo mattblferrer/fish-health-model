@@ -12,12 +12,12 @@ TIME_FRAMES  = 128
 MODEL_PATH   = "fish_classifier.pt"
 
 # Must match the order classes were discovered during training (alphabetical)
-LABEL_MAP = {0: "unstressed", 1: "stressed"}
+LABEL_MAP = {0: "no_fish_sound", 1: "stressed", 2: "unstressed"}
 
 
 # Copy of the model architecture (must be identical to training)
 class SpectrogramCNN(nn.Module):
-    def __init__(self, num_classes: int = 2):
+    def __init__(self, num_classes: int = 3):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=3, padding=1),
