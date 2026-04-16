@@ -7,6 +7,7 @@ from pathlib import Path
 # Must match the values used during training
 SAMPLE_RATE  = 16000
 WINDOW_SIZE  = 1.0
+OVERLAP      = 0.5
 N_MELS       = 64
 TIME_FRAMES  = 128
 MODEL_PATH   = "fish_classifier.pt"
@@ -47,65 +48,75 @@ class SpectrogramCNN(nn.Module):
         return self.classifier(self.conv(x))
 
 
-# Preprocessing (must match __getitem__ in training)
-def load_spectrogram(filepath: str) -> torch.Tensor:
-    mel    = torchaudio.transforms.MelSpectrogram(
+# Preprocessing 
+def load_all_windows(filepath: str) -> torch.Tensor:
+    """
+    Slices a full audio file into overlapping windows and returns a batch of
+    spectrograms. Shape: (N, 1, n_mels, time_frames)
+    Falls back to a single padded window for clips shorter than WINDOW_SIZE.
+    """
+    mel = torchaudio.transforms.MelSpectrogram(
         sample_rate=SAMPLE_RATE, n_mels=N_MELS, hop_length=512, n_fft=1024
     )
-    to_db  = torchaudio.transforms.AmplitudeToDB(top_db=80)
-
+    to_db = torchaudio.transforms.AmplitudeToDB(top_db=80)
     waveform, sr = torchaudio.load(filepath)
-
     if sr != SAMPLE_RATE:
-        waveform = torchaudio.functional.resample(waveform, orig_freq=sr, new_freq=SAMPLE_RATE)
+        waveform = torchaudio.functional.resample(
+            waveform, orig_freq=sr, new_freq=SAMPLE_RATE
+        )
     if waveform.shape[0] > 1:
         waveform = waveform.mean(dim=0, keepdim=True)
 
-    # Use the first window only (you could average all windows for longer clips)
     window_samples = int(WINDOW_SIZE * SAMPLE_RATE)
-    clip = waveform[:, :window_samples]
-    if clip.shape[1] < window_samples:
-        clip = nn.functional.pad(clip, (0, window_samples - clip.shape[1]))
+    hop_samples    = int((1 - OVERLAP) * window_samples)
+    total_samples  = waveform.shape[1]
 
-    spec = to_db(mel(clip))
+    # Build window start positions; ensure at least one window for short clips
+    starts = list(range(0, max(1, total_samples - window_samples + 1), hop_samples))
 
-    t = spec.shape[2]
-    if t < TIME_FRAMES:
-        spec = nn.functional.pad(spec, (0, TIME_FRAMES - t))
-    else:
-        spec = spec[:, :, :TIME_FRAMES]
+    windows = []
+    for start in starts:
+        clip = waveform[:, start : start + window_samples]
 
-    # Normalize
-    spec = (spec - spec.mean()) / (spec.std() + 1e-6)
+        # Pad if the final clip is shorter than a full window
+        if clip.shape[1] < window_samples:
+            clip = nn.functional.pad(clip, (0, window_samples - clip.shape[1]))
 
-    return spec.unsqueeze(0)  # add batch dimension -> (1, 1, n_mels, time)
+        spec = to_db(mel(clip))
+
+        t = spec.shape[2]
+        if t < TIME_FRAMES:
+            spec = nn.functional.pad(spec, (0, TIME_FRAMES - t))
+        else:
+            spec = spec[:, :, :TIME_FRAMES]
+
+        # Per-window normalisation (matches training)
+        spec = (spec - spec.mean()) / (spec.std() + 1e-6)
+        windows.append(spec)
+
+    return torch.stack(windows)  # (N, 1, n_mels, time_frames)
 
 
-# Inference 
-def predict(filepath: str, output_file: str) -> None:
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+# Inference
+def predict(filepath: str, model: nn.Module, device: str, output_file: str) -> None:
+    windows = load_all_windows(filepath).to(device)  # (N, 1, n_mels, time)
 
-    # Load model
-    model = SpectrogramCNN(num_classes=len(LABEL_MAP)).to(device)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-    model.eval()
-
-    # Preprocess audio
-    spec = load_spectrogram(filepath).to(device)
-
-    # Run inference
     with torch.no_grad():
-        outputs    = model(spec)
-        probs      = torch.softmax(outputs, dim=1)[0]  # convert logits to probabilities
-        confidence, predicted_idx = probs.max(dim=0)
-        label      = LABEL_MAP[predicted_idx.item()]
+        outputs   = model(windows)                  # (N, num_classes) — all windows at once
+        probs     = torch.softmax(outputs, dim=1)   # (N, num_classes)
+        avg_probs = probs.mean(dim=0)               # average across all windows
+
+    confidence, predicted_idx = avg_probs.max(dim=0)
+    label = LABEL_MAP[predicted_idx.item()]
 
     print(f"File       : {Path(filepath).name}")
+    print(f"Windows    : {len(windows)}")
     print(f"Prediction : {label}")
     print(f"Confidence : {confidence.item():.1%}")
     print()
     for idx, class_name in LABEL_MAP.items():
-        print(f"  {class_name:<12} {probs[idx].item():.1%}")
+        print(f"  {class_name:<12} {avg_probs[idx].item():.1%}")
+    print()
 
     with open(output_file, "a") as f:
         f.write(f"{Path(filepath).name},{label},{confidence.item():.4f}\n")
@@ -117,21 +128,25 @@ if __name__ == "__main__":
         print("   or: python predict.py path/to/folder/ output.csv")
         sys.exit(1)
 
-    target = Path(sys.argv[1])
+    target      = Path(sys.argv[1])
     output_file = sys.argv[2]
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Load model once and reuse it for every file
+    model = SpectrogramCNN(num_classes=len(LABEL_MAP)).to(device)
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    model.eval()
 
     # Write CSV header
-    with open(output_file, "a") as f:
+    with open(output_file, "w") as f:
         f.write("filename,prediction,confidence\n")
 
     if target.is_dir():
-        # Predict on all audio files in a folder
         files = [f for ext in ("*.wav", "*.mp3", "*.flac") for f in target.rglob(ext)]
         if not files:
             print(f"No audio files found in {target}")
             sys.exit(1)
         for f in files:
-            predict(str(f), output_file)
+            predict(str(f), model, device, output_file)
     else:
-        predict(str(target), output_file)
-    
+        predict(str(target), model, device, output_file)
