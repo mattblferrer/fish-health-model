@@ -87,6 +87,14 @@ class SoundDataset(Dataset):
                 total_samples = int(num_frames * SAMPLE_RATE / orig_sr)
                 label = self.label_map[filepath.parent.name]
 
+                # Resample and convert to mono once per file
+                if orig_sr != SAMPLE_RATE:
+                    waveform = torchaudio.functional.resample(
+                        waveform, orig_freq=orig_sr, new_freq=SAMPLE_RATE
+                    )
+                if waveform.shape[0] > 1:
+                    waveform = waveform.mean(dim=0, keepdim=True)
+
                 windows = list(range(
                     0,
                     total_samples - self.window_samples + 1,
@@ -98,8 +106,24 @@ class SoundDataset(Dataset):
                     f"resampled_samples={total_samples} | "
                     f"windows={len(windows)}"
                 )
+
+                # Pre-compute and cache every spectrogram window in RAM
                 for start in windows:
-                    self.index.append((filepath, start, label))
+                    clip = waveform[:, start : start + self.window_samples]
+                    if clip.shape[1] < self.window_samples:
+                        clip = nn.functional.pad(
+                            clip, (0, self.window_samples - clip.shape[1])
+                        )
+                    spec = self.to_db(self.mel(clip))
+                    t = spec.shape[2]
+                    if t < TIME_FRAMES:
+                        spec = nn.functional.pad(spec, (0, TIME_FRAMES - t))
+                    else:
+                        spec = spec[:, :, :TIME_FRAMES]
+                    mean = spec.mean()
+                    std  = spec.std()
+                    spec = (spec - mean) / (std + 1e-6)
+                    self.index.append((spec, label))
 
             except Exception as e:
                 print(f"[WARN] Skipping {filepath}: {e}")
@@ -109,54 +133,13 @@ class SoundDataset(Dataset):
         return len(self.index)
 
     def __getitem__(self, idx: int):
-        filepath, start, label = self.index[idx]
+        spec, label = self.index[idx]
+        if self.augment:
+            spec = self.freq_mask(spec.clone())
+            spec = self.time_mask(spec)
 
-        try:
-            waveform, sr = torchaudio.load(filepath)
-
-            if sr != SAMPLE_RATE:
-                waveform = torchaudio.functional.resample(
-                    waveform, orig_freq=sr, new_freq=SAMPLE_RATE
-                )
-            if waveform.shape[0] > 1:
-                waveform = waveform.mean(dim=0, keepdim=True)
-
-            # Slice the requested window; pad if the file is too short
-            clip = waveform[:, start : start + self.window_samples]
-            if clip.shape[1] < self.window_samples:
-                clip = nn.functional.pad(
-                    clip, (0, self.window_samples - clip.shape[1])
-                )
-
-            # Log-mel spectrogram
-            spec = self.to_db(self.mel(clip))  # (1, n_mels, time)
-
-            # Fix time dimension
-            t = spec.shape[2]
-            if t < TIME_FRAMES:
-                spec = nn.functional.pad(spec, (0, TIME_FRAMES - t))
-            else:
-                spec = spec[:, :, :TIME_FRAMES]
-
-            # Per-sample standardisation (guard against silent clips)
-            mean = spec.mean()
-            std  = spec.std()
-            spec = (spec - mean) / (std + 1e-6)
-
-            # SpecAugment (training only)
-            if self.augment:
-                spec = self.freq_mask(spec)
-                spec = self.time_mask(spec)
-
-            return spec, label
-
-        except Exception as e:
-            print(f"[ERROR] {filepath} @ {start}: {e}")
-            # Return a clearly invalid label so a custom collate_fn can
-            # filter it out.
-            return torch.zeros(1, N_MELS, TIME_FRAMES), -1
-
-    # Convenience
+        return spec, label
+    
     @property
     def num_classes(self) -> int:
         return len(self.label_map)
@@ -351,16 +334,16 @@ def main():
 
     train_loader = DataLoader(
         AugmentedSubset(train_set), batch_size=BATCH_SIZE,
-        shuffle=True, num_workers=2, pin_memory=(device == "cuda"),
+        shuffle=True, num_workers=0, pin_memory=(device == "cuda"),
         collate_fn=collate_fn,
     )
     val_loader = DataLoader(
         val_set, batch_size=BATCH_SIZE, shuffle=False,
-        num_workers=2, collate_fn=collate_fn,
+        num_workers=0, collate_fn=collate_fn,
     )
     test_loader = DataLoader(
         test_set, batch_size=BATCH_SIZE, shuffle=False,
-        num_workers=2, collate_fn=collate_fn,
+        num_workers=0, collate_fn=collate_fn,
     )
 
     # Training
