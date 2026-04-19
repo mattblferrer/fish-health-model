@@ -119,7 +119,10 @@ def predict(filepath: str, model: nn.Module, device: str, output_file: str) -> N
     print()
 
     with open(output_file, "a") as f:
-        f.write(f"{Path(filepath).name},{label},{confidence.item():.4f}\n")
+        f.write(f"{Path(filepath).name},{label}")
+        for idx, class_name in LABEL_MAP.items():
+            f.write(f",{avg_probs[idx].item():.4f}")
+        f.write("\n")
 
 
 if __name__ == "__main__":
@@ -139,7 +142,12 @@ if __name__ == "__main__":
 
     # Write CSV header
     with open(output_file, "w") as f:
-        f.write("filename,prediction,confidence\n")
+        f.write("filename,prediction,")
+        for idx, class_name in LABEL_MAP.items():
+            f.write(f"{class_name}")
+            if idx < len(LABEL_MAP) - 1:
+                f.write(",")
+        f.write("\n")
 
     if target.is_dir():
         files = [f for ext in ("*.wav", "*.mp3", "*.flac") for f in target.rglob(ext)]
